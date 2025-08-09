@@ -3,7 +3,7 @@ name: Upstream Sync
 on:
   schedule:
     - cron: "0 */6 * * *" # 每6小时运行一次
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,36 +16,50 @@ jobs:
     if: ${{ github.event.repository.fork }}
 
     steps:
+      # 步骤1: 检出目标仓库
       - name: Checkout target repo
         uses: actions/checkout@v4
+
+      # 步骤2: 同步上游更改
+      - name: Sync upstream changes
+        id: sync
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4.1
         with:
-          fetch-depth: 0 # 拉取所有历史，确保有完整上下文
-          token: ${{ secrets.GITHUB_TOKEN }}
+          upstream_sync_repo: LunaTechLab/MoonTV
+          upstream_sync_branch: main
+          target_sync_branch: main
+          target_repo_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure git
+      # 步骤3: 移除同步过来的public文件夹内容
+      - name: Remove public folder contents from sync
+        if: steps.sync.outputs.has_new_commits == 'true'
         run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
+          # 检查public文件夹是否存在
+          if [ -d "public" ]; then
+            # 清空public文件夹但保留文件夹本身
+            rm -rf public/*
+            # 如果需要保留某些文件，可以在这里添加例外
+            # 例如: mkdir -p public/assets && touch public/assets/.gitkeep
+            
+            # 提交更改
+            git config --global user.name "GitHub Actions"
+            git config --global user.email "actions@github.com"
+            git add public/
+            git commit -m "Remove public folder contents after upstream sync"
+            git push
+          fi
 
-      - name: Add upstream remote
+      - name: Sync check
+        if: failure()
         run: |
-          git remote add upstream https://github.com/LunaTechLab/MoonTV.git
-          git fetch upstream
+          echo "[Error] 由于上游仓库工作流文件的更改，GitHub已自动暂停定时更新。请手动同步你的分支。"
+          exit 1
 
-      - name: Merge upstream changes
-        run: |
-          # 尝试合并上游更改，如果有冲突则保留本地修改
-          git checkout main
-          git pull upstream main --rebase -X ours || {
-            echo "合并冲突已自动处理（保留本地修改）"
-            git rebase --continue
-          }
-          git push origin main
-
-      - name: Delete old workflow runs
+      - name: Delete workflow runs
         uses: Mattraks/delete-workflow-runs@main
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
           retain_days: 0
           keep_minimum_runs: 2
+    
